@@ -178,7 +178,7 @@ public class PSBTInput {
                     }
                     break;
                 case PSBT_IN_PARTIAL_SIG:
-                    entry.checkOneBytePlusPubKey();
+                    entry.checkOneBytePlusSignaturePubKey();
                     ECKey sigPublicKey = ECKey.fromPublicOnly(entry.getKeyData());
                     if(entry.getData().length == 64 || entry.getData().length == 65) {
                         log.error("Schnorr signature provided as ECDSA partial signature, ignoring");

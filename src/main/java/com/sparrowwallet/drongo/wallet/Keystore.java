@@ -426,8 +426,8 @@ public class Keystore extends Persistable {
                         (!singleKey.isEncrypted() && !Arrays.equals(singleKey.getKey().getPubKey(), singlePublicKey)))) {
                     throw new InvalidKeystoreException("Private key does not match the public key");
                 }
-            } catch(IllegalArgumentException e) {
-                throw new InvalidKeystoreException("Invalid single public key", e);
+            } catch(IllegalArgumentException | IllegalStateException e) {
+                throw new InvalidKeystoreException("Invalid single key", e);
             }
             if((source != KeystoreSource.SW_PRIVATE_KEY && source != KeystoreSource.SW_WATCH) ||
                     (source == KeystoreSource.SW_PRIVATE_KEY && singleKey == null) ||
@@ -612,7 +612,7 @@ public class Keystore extends Persistable {
 
     public void decrypt(CharSequence password) {
         if(hasSingleKey() && singleKey.isEncrypted()) {
-            singleKey = singleKey.decrypt(password);
+            setDecryptedSingleKey(singleKey.decrypt(password));
         }
         if(hasSeed() && seed.isEncrypted()) {
             seed = seed.decrypt(password);
@@ -624,7 +624,7 @@ public class Keystore extends Persistable {
 
     public void decrypt(Key key) {
         if(hasSingleKey() && singleKey.isEncrypted()) {
-            singleKey = singleKey.decrypt(key);
+            setDecryptedSingleKey(singleKey.decrypt(key));
         }
         if(hasSeed() && seed.isEncrypted()) {
             seed = seed.decrypt(key);
@@ -632,6 +632,14 @@ public class Keystore extends Persistable {
         if(hasMasterPrivateExtendedKey() && masterPrivateExtendedKey.isEncrypted()) {
             masterPrivateExtendedKey = masterPrivateExtendedKey.decrypt(key);
         }
+    }
+
+    private void setDecryptedSingleKey(SingleKey decryptedKey) {
+        if(!Arrays.equals(decryptedKey.getKey().getPubKey(), singlePublicKey)) {
+            decryptedKey.clear();
+            throw new KeyCrypterException("Decrypted private key does not match the public key");
+        }
+        singleKey = decryptedKey;
     }
 
     public void clearPrivate() {

@@ -12,6 +12,13 @@ public class SingleKey extends Persistable implements EncryptableItem {
     private final EncryptedData encryptedKey;
 
     public SingleKey(byte[] privateKey, boolean compressed) {
+        checkPrivateKey(privateKey);
+        this.privateKey = privateKey.clone();
+        this.compressed = compressed;
+        this.encryptedKey = null;
+    }
+
+    private static void checkPrivateKey(byte[] privateKey) {
         if(privateKey == null || privateKey.length != 32) {
             throw new IllegalArgumentException("Private key must contain 32 bytes");
         }
@@ -19,9 +26,6 @@ public class SingleKey extends Persistable implements EncryptableItem {
         if(scalar.signum() == 0 || scalar.compareTo(ECKey.CURVE.getN()) >= 0) {
             throw new IllegalArgumentException("Private key is outside the valid secp256k1 range");
         }
-        this.privateKey = privateKey.clone();
-        this.compressed = compressed;
-        this.encryptedKey = null;
     }
 
     public SingleKey(ECKey key) {
@@ -29,18 +33,26 @@ public class SingleKey extends Persistable implements EncryptableItem {
     }
 
     public SingleKey(EncryptedData encryptedKey, boolean compressed) {
-        if(encryptedKey == null) {
-            throw new IllegalArgumentException("Encrypted private key is required");
-        }
+        checkEncryptedKey(encryptedKey);
         this.privateKey = null;
         this.compressed = compressed;
-        this.encryptedKey = encryptedKey;
+        this.encryptedKey = encryptedKey.copy();
+    }
+
+    private static void checkEncryptedKey(EncryptedData encryptedKey) {
+        if(encryptedKey == null || !new EncryptionType(EncryptionType.Deriver.ARGON2, EncryptionType.Crypter.AES_CBC_PKCS7).equals(encryptedKey.getEncryptionType()) ||
+                encryptedKey.getInitialisationVector() == null || encryptedKey.getInitialisationVector().length != AESKeyCrypter.BLOCK_LENGTH ||
+                encryptedKey.getEncryptedBytes() == null || encryptedKey.getEncryptedBytes().length != 48 ||
+                encryptedKey.getKeySalt() == null || encryptedKey.getKeySalt().length != Argon2KeyDeriver.SPRW1_PARAMETERS.saltLength) {
+            throw new IllegalArgumentException("Invalid encrypted private key");
+        }
     }
 
     public ECKey getKey() {
         if(isEncrypted()) {
             throw new IllegalStateException("Private key is encrypted");
         }
+        checkPrivateKey(privateKey);
         return ECKey.fromPrivate(privateKey, compressed);
     }
 
@@ -50,6 +62,12 @@ public class SingleKey extends Persistable implements EncryptableItem {
 
     @Override
     public boolean isEncrypted() {
+        if((privateKey == null) == (encryptedKey == null)) {
+            throw new IllegalStateException("Private key must have exactly one private representation");
+        }
+        if(encryptedKey != null) {
+            checkEncryptedKey(encryptedKey);
+        }
         return encryptedKey != null;
     }
 
@@ -63,7 +81,7 @@ public class SingleKey extends Persistable implements EncryptableItem {
 
     @Override
     public EncryptedData getEncryptedData() {
-        return encryptedKey;
+        return encryptedKey == null ? null : encryptedKey.copy();
     }
 
     @Override

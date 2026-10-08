@@ -213,4 +213,59 @@ class SingleKeyWalletTest {
         assertArrayEquals(new byte[32], encryptedCopy.getKeystores().getFirst().getSingleKey().getSecretBytes());
         assertEquals(COMPRESSED_WIF, copy.getKeystores().getFirst().getSingleKey().getKey().getPrivateKeyEncoded().toString());
     }
+
+    @Test
+    void rejectsInvalidAndMixedKeystoreMaterial() {
+        Wallet wallet = Wallet.fromSingleKey("Validation", ECKey.fromPrivate(BigInteger.ONE), ScriptType.P2WPKH);
+        Keystore keystore = wallet.getKeystores().getFirst();
+        keystore.setSinglePublicKey(ECKey.fromPrivate(BigInteger.TWO).getPubKey());
+        assertFalse(wallet.isValid());
+        keystore.setSinglePublicKey(ECKey.fromPrivate(BigInteger.ONE).getPubKey());
+        keystore.setSource(KeystoreSource.SW_WATCH);
+        assertFalse(wallet.isValid());
+        keystore.setSingleKey(null);
+        assertTrue(wallet.isValid());
+        keystore.setSource(KeystoreSource.SW_PRIVATE_KEY);
+        assertFalse(wallet.isValid());
+        keystore.setSingleKey(new SingleKey(ECKey.fromPrivate(BigInteger.ONE)));
+        keystore.setKeyDerivation(new com.sparrowwallet.drongo.KeyDerivation("00000000", "m"));
+        assertFalse(wallet.isValid());
+        keystore.setKeyDerivation(null);
+        wallet.setPolicyType(PolicyType.SINGLE_HD);
+        assertFalse(wallet.isValid());
+        for(String invalidPubKey : List.of("02" + "ff".repeat(32), "04" + "00".repeat(64))) {
+            assertThrows(IllegalArgumentException.class, () -> OutputDescriptor.getOutputDescriptor("pkh(" + invalidPubKey + ")"));
+        }
+    }
+
+    @Test
+    void validatesEncryptedMaterialAndPublicKeyOnUnlock() {
+        Key encryptionKey = new Argon2KeyDeriver().deriveKey("test-only password");
+        try {
+            Keystore keystore = Keystore.fromSingleKey(ECKey.fromPrivate(BigInteger.ONE));
+            keystore.encrypt(encryptionKey);
+            EncryptedData encryptedData = keystore.getSingleKey().getEncryptedData();
+            for(EncryptedData invalid : List.of(
+                    new EncryptedData(new byte[15], new byte[48], new byte[16], encryptedData.getEncryptionType()),
+                    new EncryptedData(new byte[16], new byte[32], new byte[16], encryptedData.getEncryptionType()),
+                    new EncryptedData(new byte[16], new byte[48], null, encryptedData.getEncryptionType()),
+                    new EncryptedData(new byte[16], new byte[48], new byte[15], encryptedData.getEncryptionType()),
+                    new EncryptedData(new byte[16], new byte[48], new byte[16], EncryptionType.Deriver.SCRYPT, EncryptionType.Crypter.AES_CBC_PKCS7),
+                    new EncryptedData(new byte[16], new byte[48], new byte[16], EncryptionType.Deriver.ARGON2, EncryptionType.Crypter.NONE))) {
+                assertThrows(IllegalArgumentException.class, () -> new SingleKey(invalid, true));
+            }
+            SingleKey encrypted = keystore.getSingleKey();
+            keystore.setSinglePublicKey(ECKey.fromPrivate(BigInteger.TWO).getPubKey());
+            assertThrows(KeyCrypterException.class, () -> keystore.decrypt(encryptionKey));
+            assertSame(encrypted, keystore.getSingleKey());
+            assertThrows(KeyCrypterException.class, () -> keystore.decrypt("test-only password"));
+            assertSame(encrypted, keystore.getSingleKey());
+            keystore.setSinglePublicKey(ECKey.fromPrivate(BigInteger.ONE).getPubKey());
+            keystore.decrypt(encryptionKey);
+            assertEquals(BigInteger.ONE, keystore.getSingleKey().getKey().getPrivKey());
+            keystore.clearPrivate();
+        } finally {
+            encryptionKey.clear();
+        }
+    }
 }

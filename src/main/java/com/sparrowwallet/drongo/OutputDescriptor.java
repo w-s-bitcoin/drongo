@@ -112,6 +112,9 @@ public class OutputDescriptor {
         if(!scriptType.isAllowed(PolicyType.SINGLE_KEY) || (!publicKey.isCompressed() && scriptType != ScriptType.P2PKH)) {
             throw new IllegalArgumentException("Unsupported single-key descriptor");
         }
+        if(publicKey.getPubKeyPoint().isInfinity() || !publicKey.getPubKeyPoint().isValid()) {
+            throw new IllegalArgumentException("Invalid single public key");
+        }
         this.singlePublicKey = ECKey.fromPublicOnly(publicKey);
     }
 
