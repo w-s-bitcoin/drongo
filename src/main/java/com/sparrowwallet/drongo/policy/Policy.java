@@ -41,7 +41,7 @@ public class Policy extends Persistable {
     }
 
     public static Policy getPolicy(PolicyType policyType, ScriptType scriptType, List<Keystore> keystores, Integer threshold) {
-        if(SINGLE_HD.equals(policyType)) {
+        if(SINGLE_HD.equals(policyType) || SINGLE_KEY.equals(policyType)) {
             return new Policy(new Miniscript(scriptType.getDescriptor() + keystores.get(0).getScriptName() + scriptType.getCloseDescriptor()));
         }
 

@@ -267,7 +267,7 @@ public enum ScriptType {
 
         @Override
         public List<PolicyType> getAllowedPolicyTypes() {
-            return List.of(SINGLE_HD);
+            return List.of(SINGLE_HD, SINGLE_KEY);
         }
     },
     MULTISIG("Bare Multisig", "Bare Multisig", "m/44'/0'/0'") {
@@ -738,7 +738,7 @@ public enum ScriptType {
 
         @Override
         public List<PolicyType> getAllowedPolicyTypes() {
-            return List.of(SINGLE_HD);
+            return List.of(SINGLE_HD, SINGLE_KEY);
         }
     },
     P2SH_P2WSH("P2SH-P2WSH", "Nested Segwit (P2SH-P2WSH)", "m/48'/0'/0'/1'") {
@@ -962,7 +962,7 @@ public enum ScriptType {
 
         @Override
         public List<PolicyType> getAllowedPolicyTypes() {
-            return List.of(SINGLE_HD);
+            return List.of(SINGLE_HD, SINGLE_KEY);
         }
     },
     P2WSH("P2WSH", "Native Segwit (P2WSH)", "m/48'/0'/0'/2'") {
@@ -1215,7 +1215,7 @@ public enum ScriptType {
 
         @Override
         public List<PolicyType> getAllowedPolicyTypes() {
-            return List.of(SINGLE_HD, SINGLE_SP);
+            return List.of(SINGLE_HD, SINGLE_SP, SINGLE_KEY);
         }
     },
     P2A("P2A", "Anchor (P2A)", "m/86'/0'/0'") {

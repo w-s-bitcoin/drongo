@@ -43,6 +43,7 @@ public class OutputDescriptor {
     private final ScriptType scriptType;
     private final int multisigThreshold;
     private final Map<ExtendedKey, KeyDerivation> extendedPublicKeys;
+    private ECKey singlePublicKey;
     private final Map<ExtendedKey, String> mapChildrenDerivations;
     private final Map<ExtendedKey, String> mapExtendedPublicKeyLabels;
     private final Map<ExtendedKey, ExtendedKey> extendedMasterPrivateKeys;
@@ -104,6 +105,22 @@ public class OutputDescriptor {
         this.silentPaymentScanAddresses = silentPaymentScanAddresses;
         this.mapSilentPaymentLabels = mapSilentPaymentLabels;
         this.annotations = annotations;
+    }
+
+    public OutputDescriptor(ScriptType scriptType, ECKey publicKey) {
+        this(scriptType, 1, new LinkedHashMap<>());
+        if(!scriptType.isAllowed(PolicyType.SINGLE_KEY) || (!publicKey.isCompressed() && scriptType != ScriptType.P2PKH)) {
+            throw new IllegalArgumentException("Unsupported single-key descriptor");
+        }
+        this.singlePublicKey = ECKey.fromPublicOnly(publicKey);
+    }
+
+    public boolean isSingleKey() {
+        return singlePublicKey != null;
+    }
+
+    public ECKey getSinglePublicKey() {
+        return singlePublicKey;
     }
 
     public Set<ExtendedKey> getExtendedPublicKeys() {
@@ -241,6 +258,9 @@ public class OutputDescriptor {
     }
 
     public List<ChildNumber> getChildDerivation() {
+        if(isSingleKey()) {
+            return Collections.emptyList();
+        }
         List<ChildNumber> lastDerivation = null;
         for(ExtendedKey pubKey : extendedPublicKeys.keySet()) {
             List<ChildNumber> derivation = getChildDerivation(pubKey);
@@ -254,6 +274,9 @@ public class OutputDescriptor {
     }
 
     public List<ChildNumber> getReceivingDerivation(int wildCardReplacement) {
+        if(isSingleKey()) {
+            return Collections.emptyList();
+        }
         if(isMultisig()) {
             List<ChildNumber> path = new ArrayList<>();
             path.add(new ChildNumber(0));
@@ -265,6 +288,9 @@ public class OutputDescriptor {
     }
 
     public List<ChildNumber> getChangeDerivation(int wildCardReplacement) {
+        if(isSingleKey()) {
+            return Collections.emptyList();
+        }
         if(isMultisig()) {
             List<ChildNumber> path = new ArrayList<>();
             path.add(new ChildNumber(1));
@@ -276,6 +302,9 @@ public class OutputDescriptor {
     }
 
     public Address getAddress(List<ChildNumber> path) {
+        if(isSingleKey()) {
+            return scriptType.getAddress(PolicyType.SINGLE_KEY, singlePublicKey);
+        }
         if(isMultisig()) {
             Script script = getMultisigScript(path);
             return getAddress(script);
@@ -320,6 +349,16 @@ public class OutputDescriptor {
     }
 
     public Wallet toWallet() {
+        if(isSingleKey()) {
+            Wallet wallet = new Wallet();
+            wallet.setPolicyType(PolicyType.SINGLE_KEY);
+            wallet.setScriptType(scriptType);
+            Keystore keystore = new Keystore("Public Key");
+            keystore.setSinglePublicKey(singlePublicKey.getPubKey());
+            wallet.getKeystores().add(keystore);
+            wallet.setDefaultPolicy(Policy.getPolicy(PolicyType.SINGLE_KEY, scriptType, wallet.getKeystores(), 1));
+            return wallet;
+        }
         if(isSilentPayments()) {
             return toSilentPaymentWallet();
         }
@@ -460,6 +499,9 @@ public class OutputDescriptor {
     }
 
     public static OutputDescriptor getOutputDescriptor(Wallet wallet, List<KeyPurpose> keyPurposes, Integer index) {
+        if(wallet.isSingleKeyWallet()) {
+            return new OutputDescriptor(wallet.getScriptType(), wallet.getKeystores().getFirst().getPubKey(null));
+        }
         Map<String, Integer> annotations = getWalletAnnotations(wallet);
 
         if(wallet.getPolicyType() == PolicyType.SINGLE_SP) {
@@ -542,6 +584,18 @@ public class OutputDescriptor {
 
         if(scriptType == null) {
             throw new IllegalArgumentException("Cannot determine script type from descriptor: " + descriptor);
+        }
+
+        if(scriptType.isAllowed(PolicyType.SINGLE_KEY) && descriptor.startsWith(scriptType.getDescriptor()) && descriptor.endsWith(scriptType.getCloseDescriptor())) {
+            String key = descriptor.substring(scriptType.getDescriptor().length(), descriptor.length() - scriptType.getCloseDescriptor().length());
+            if(key.matches("(?:[0-9a-fA-F]{64}|[0-9a-fA-F]{66}|[0-9a-fA-F]{130})")) {
+                if(key.length() == 64 && scriptType != ScriptType.P2TR) {
+                    throw new IllegalArgumentException("X-only public keys require Taproot");
+                }
+                OutputDescriptor result = new OutputDescriptor(scriptType, ECKey.fromPublicOnly(Utils.hexToBytes(key)));
+                result.annotations.putAll(annotations);
+                return result;
+            }
         }
 
         int threshold = getMultisigThreshold(descriptor);
@@ -895,7 +949,9 @@ public class OutputDescriptor {
     public String toString(boolean addKeyOrigin, boolean addKey, boolean addChecksum, boolean alternateForm) {
         StringBuilder builder = new StringBuilder();
 
-        if(isSilentPayments()) {
+        if(isSingleKey()) {
+            builder.append(scriptType.getOutputDescriptor(PolicyType.SINGLE_KEY, singlePublicKey));
+        } else if(isSilentPayments()) {
             Map.Entry<SilentPaymentScanAddress, KeyDerivation> entry = silentPaymentScanAddresses.entrySet().iterator().next();
             builder.append("sp(");
             if(alternateForm) {
@@ -1086,6 +1142,11 @@ public class OutputDescriptor {
     }
 
     public OutputDescriptor copy(boolean includeChildDerivations) {
+        if(isSingleKey()) {
+            OutputDescriptor copy = new OutputDescriptor(scriptType, singlePublicKey);
+            copy.annotations.putAll(annotations);
+            return copy;
+        }
         if(isSilentPayments()) {
             return new OutputDescriptor(new LinkedHashMap<>(silentPaymentScanAddresses), new LinkedHashMap<>(mapSilentPaymentLabels), new LinkedHashMap<>(annotations));
         }

@@ -130,7 +130,7 @@ public class PSBT {
             Collections.swap(walletTransactionOutputs, i, j);
         }
 
-        if(includeGlobalXpubs && wallet.getPolicyType() != PolicyType.SINGLE_SP) {
+        if(includeGlobalXpubs && wallet.getPolicyType() != PolicyType.SINGLE_SP && !wallet.isSingleKeyWallet()) {
             for(Keystore keystore : wallet.getKeystores()) {
                 extendedPublicKeys.put(keystore.getExtendedPublicKey(), keystore.getKeyDerivation());
             }
@@ -170,7 +170,9 @@ public class PSBT {
                 if(silentPaymentsTweak != null && keystore.getSilentPaymentScanAddress() != null && signingWallet.getPolicyType() == PolicyType.SINGLE_SP) {
                     putSilentPaymentsSpendDerivation(keystore, spSpendDerivations);
                 } else {
-                    derivedPublicKeys.put(signingWallet.getScriptType().getOutputKey(signingWallet.getPolicyType(), keystore.getPubKey(walletNode)), keystore.getKeyDerivation().extend(walletNode.getDerivation()));
+                    if(!signingWallet.isSingleKeyWallet()) {
+                        derivedPublicKeys.put(signingWallet.getScriptType().getOutputKey(signingWallet.getPolicyType(), keystore.getPubKey(walletNode)), keystore.getKeyDerivation().extend(walletNode.getDerivation()));
+                    }
                     if(signingWallet.getScriptType() == ScriptType.P2TR) {
                         tapInternalKey = keystore.getPubKey(walletNode);
                     }
@@ -213,7 +215,9 @@ public class PSBT {
                 Map<ECKey, KeyDerivation> derivedPublicKeys = new LinkedHashMap<>();
                 ECKey tapInternalKey = null;
                 for(Keystore keystore : recipientWallet.getKeystores()) {
-                    derivedPublicKeys.put(recipientWallet.getScriptType().getOutputKey(recipientWallet.getPolicyType(), keystore.getPubKey(outputNode)), keystore.getKeyDerivation().extend(outputNode.getDerivation()));
+                    if(!recipientWallet.isSingleKeyWallet()) {
+                        derivedPublicKeys.put(recipientWallet.getScriptType().getOutputKey(recipientWallet.getPolicyType(), keystore.getPubKey(outputNode)), keystore.getKeyDerivation().extend(outputNode.getDerivation()));
+                    }
                     if(recipientWallet.getScriptType() == ScriptType.P2TR) {
                         tapInternalKey = keystore.getPubKey(outputNode);
                     }
@@ -675,6 +679,12 @@ public class PSBT {
                         } else {
                             ScriptType scriptType = walletNode.getWallet().getScriptType();
                             ECKey pubKey = keystore.getPubKey(walletNode);
+                            if(signingWallet.isSingleKeyWallet()) {
+                                if(scriptType == ScriptType.P2TR) {
+                                    psbtInput.setTapInternalKey(ECKey.fromPublicOnly(pubKey.getPubKeyXCoord()));
+                                }
+                                continue;
+                            }
                             KeyDerivation keyDerivation = keystore.getKeyDerivation().extend(walletNode.getDerivation());
                             if(scriptType == ScriptType.P2TR) {
                                 psbtInput.setTapInternalKey(ECKey.fromPublicOnly(pubKey.getPubKeyXCoord()));
