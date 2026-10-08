@@ -3,6 +3,7 @@ package com.sparrowwallet.drongo.crypto;
 
 import com.sparrowwallet.drongo.Network;
 
+import java.math.BigInteger;
 import java.util.Arrays;
 import java.util.Objects;
 
@@ -22,6 +23,9 @@ public class DumpedPrivateKey extends VersionedChecksummedBytes {
      * @param base58 The textual form of the private key.
      */
     public static DumpedPrivateKey fromBase58(String base58) {
+        if(base58 == null || !base58.matches("[1-9A-HJ-NP-Za-km-z]{51,52}")) {
+            throw new IllegalArgumentException("Enter a WIF private key (51 or 52 Base58 characters)");
+        }
         return new DumpedPrivateKey(base58);
     }
 
@@ -58,6 +62,10 @@ public class DumpedPrivateKey extends VersionedChecksummedBytes {
             compressed = false;
         } else {
             throw new IllegalArgumentException("Wrong number of bytes for a private key, not " + PRIVATE_KEY_LENGTH + " or " + (PRIVATE_KEY_LENGTH + 1));
+        }
+        BigInteger scalar = new BigInteger(1, Arrays.copyOf(bytes, PRIVATE_KEY_LENGTH));
+        if(scalar.signum() == 0 || scalar.compareTo(ECKey.CURVE.getN()) >= 0) {
+            throw new IllegalArgumentException("Private key is outside the valid secp256k1 range");
         }
     }
 

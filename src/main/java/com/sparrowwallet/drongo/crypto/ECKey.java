@@ -131,8 +131,8 @@ public class ECKey {
 
     protected ECKey(BigInteger priv, LazyECPoint pub) {
         if(priv != null) {
-            if(priv.equals(BigInteger.ZERO) || priv.equals(BigInteger.ONE)) {
-                throw new IllegalArgumentException("Private key is illegal: " + priv);
+            if(priv.signum() == 0) {
+                throw new IllegalArgumentException("Private key is outside the valid secp256k1 range");
             }
         }
 

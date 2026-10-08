@@ -31,6 +31,8 @@ public class Keystore extends Persistable {
     private byte[] deviceRegistration;
     private MasterPrivateExtendedKey masterPrivateExtendedKey;
     private DeterministicSeed seed;
+    private SingleKey singleKey;
+    private byte[] singlePublicKey;
 
     //For BIP47 keystores - not persisted but must be unencrypted to generate keys
     private transient ExtendedKey bip47ExtendedPrivateKey;
@@ -149,12 +151,40 @@ public class Keystore extends Persistable {
         this.seed = seed;
     }
 
+    public boolean hasSingleKey() {
+        return singleKey != null;
+    }
+
+    public SingleKey getSingleKey() {
+        return singleKey;
+    }
+
+    public void setSingleKey(SingleKey singleKey) {
+        this.singleKey = singleKey;
+    }
+
+    public byte[] getSinglePublicKey() {
+        return singlePublicKey == null ? null : singlePublicKey.clone();
+    }
+
+    public void setSinglePublicKey(byte[] singlePublicKey) {
+        this.singlePublicKey = singlePublicKey == null ? null : singlePublicKey.clone();
+    }
+
+    public static Keystore fromSingleKey(ECKey key) {
+        Keystore keystore = new Keystore("Private Key");
+        keystore.setSource(KeystoreSource.SW_PRIVATE_KEY);
+        keystore.setSingleKey(new SingleKey(key));
+        keystore.setSinglePublicKey(key.getPubKey());
+        return keystore;
+    }
+
     public boolean hasMasterPrivateKey() {
         return hasSeed() || hasMasterPrivateExtendedKey();
     }
 
     public boolean hasPrivateKey() {
-        return hasMasterPrivateKey() || (source == KeystoreSource.SW_PAYMENT_CODE && bip47ExtendedPrivateKey != null);
+        return hasSingleKey() || hasMasterPrivateKey() || (source == KeystoreSource.SW_PAYMENT_CODE && bip47ExtendedPrivateKey != null);
     }
 
     public boolean needsPassphrase() {
@@ -230,6 +260,13 @@ public class Keystore extends Persistable {
     }
 
     public ECKey getKey(WalletNode walletNode) throws MnemonicException {
+        if(singlePublicKey != null) {
+            if(singleKey == null) {
+                throw new IllegalStateException("Keystore does not contain a private key");
+            }
+            return singleKey.getKey();
+        }
+
         if(silentPaymentScanAddress != null && walletNode.getWallet().getPolicyType() == PolicyType.SINGLE_SP) {
             ECKey spendPrivKey = getSpendPrivateKey(Collections.emptyMap());
             byte[] tweak = walletNode.getSilentPaymentTweak();
@@ -265,6 +302,10 @@ public class Keystore extends Persistable {
     }
 
     public ECKey getPubKey(WalletNode walletNode) {
+        if(singlePublicKey != null) {
+            return ECKey.fromPublicOnly(singlePublicKey);
+        }
+
         if(silentPaymentScanAddress != null && walletNode.getWallet().getPolicyType() == PolicyType.SINGLE_SP) {
             ECKey spendKey = silentPaymentScanAddress.getSpendKey();
             byte[] tweak = walletNode.getSilentPaymentTweak();
@@ -369,6 +410,40 @@ public class Keystore extends Persistable {
             throw new InvalidKeystoreException("No wallet model specified");
         }
 
+        if(singlePublicKey != null || source == KeystoreSource.SW_PRIVATE_KEY) {
+            if(label.isEmpty() || label.replace(" ", "").length() > MAX_LABEL_LENGTH) {
+                throw new InvalidKeystoreException("Invalid key label length");
+            }
+            if(singlePublicKey == null || (singlePublicKey.length != 33 && singlePublicKey.length != 65)) {
+                throw new InvalidKeystoreException("Invalid single public key");
+            }
+            try {
+                ECKey pubKey = ECKey.fromPublicOnly(singlePublicKey);
+                if(pubKey.getPubKeyPoint().isInfinity() || !pubKey.getPubKeyPoint().isValid() || !Arrays.equals(pubKey.getPubKey(), singlePublicKey)) {
+                    throw new InvalidKeystoreException("Invalid public key encoding");
+                }
+                if(singleKey != null && (singleKey.isCompressed() != pubKey.isCompressed() ||
+                        (!singleKey.isEncrypted() && !Arrays.equals(singleKey.getKey().getPubKey(), singlePublicKey)))) {
+                    throw new InvalidKeystoreException("Private key does not match the public key");
+                }
+            } catch(IllegalArgumentException | IllegalStateException e) {
+                throw new InvalidKeystoreException("Invalid single key", e);
+            }
+            if((source != KeystoreSource.SW_PRIVATE_KEY && source != KeystoreSource.SW_WATCH) ||
+                    (source == KeystoreSource.SW_PRIVATE_KEY && singleKey == null) ||
+                    (source == KeystoreSource.SW_WATCH && singleKey != null)) {
+                throw new InvalidKeystoreException("Single-key source does not match its private material");
+            }
+            if(keyDerivation != null || extendedPublicKey != null || seed != null || masterPrivateExtendedKey != null || externalPaymentCode != null || silentPaymentScanAddress != null) {
+                throw new InvalidKeystoreException("A single-key keystore cannot contain HD or payment-code material");
+            }
+            return;
+        }
+
+        if(singleKey != null) {
+            throw new InvalidKeystoreException("Private key is missing its public key");
+        }
+
         if(keyDerivation == null) {
             throw new InvalidKeystoreException("No key derivation specified");
         }
@@ -445,6 +520,10 @@ public class Keystore extends Persistable {
         copy.setId(getId());
         copy.setSource(source);
         copy.setWalletModel(walletModel);
+        copy.setSinglePublicKey(singlePublicKey);
+        if(singleKey != null) {
+            copy.setSingleKey(singleKey.copy());
+        }
         if(keyDerivation != null) {
             copy.setKeyDerivation(keyDerivation.copy());
         }
@@ -514,10 +593,15 @@ public class Keystore extends Persistable {
     }
 
     public boolean isEncrypted() {
-        return (seed != null && seed.isEncrypted()) || (masterPrivateExtendedKey != null && masterPrivateExtendedKey.isEncrypted());
+        return (singleKey != null && singleKey.isEncrypted()) || (seed != null && seed.isEncrypted()) || (masterPrivateExtendedKey != null && masterPrivateExtendedKey.isEncrypted());
     }
 
     public void encrypt(Key key) {
+        if(hasSingleKey() && !singleKey.isEncrypted()) {
+            SingleKey unencrypted = singleKey;
+            singleKey = singleKey.encrypt(key);
+            unencrypted.clear();
+        }
         if(hasSeed() && !seed.isEncrypted()) {
             seed = seed.encrypt(key);
         }
@@ -527,6 +611,9 @@ public class Keystore extends Persistable {
     }
 
     public void decrypt(CharSequence password) {
+        if(hasSingleKey() && singleKey.isEncrypted()) {
+            setDecryptedSingleKey(singleKey.decrypt(password));
+        }
         if(hasSeed() && seed.isEncrypted()) {
             seed = seed.decrypt(password);
         }
@@ -536,6 +623,9 @@ public class Keystore extends Persistable {
     }
 
     public void decrypt(Key key) {
+        if(hasSingleKey() && singleKey.isEncrypted()) {
+            setDecryptedSingleKey(singleKey.decrypt(key));
+        }
         if(hasSeed() && seed.isEncrypted()) {
             seed = seed.decrypt(key);
         }
@@ -544,7 +634,18 @@ public class Keystore extends Persistable {
         }
     }
 
+    private void setDecryptedSingleKey(SingleKey decryptedKey) {
+        if(!Arrays.equals(decryptedKey.getKey().getPubKey(), singlePublicKey)) {
+            decryptedKey.clear();
+            throw new KeyCrypterException("Decrypted private key does not match the public key");
+        }
+        singleKey = decryptedKey;
+    }
+
     public void clearPrivate() {
+        if(hasSingleKey()) {
+            singleKey.clear();
+        }
         if(hasSeed()) {
             seed.clear();
         }

@@ -202,7 +202,11 @@ public class OutputDescriptorTest {
 
     @Test
     public void testPubKeySingle() {
-        Assertions.assertThrows(IllegalArgumentException.class, () -> OutputDescriptor.getOutputDescriptor("sh(wpkh(03fff97bd5755eeea420453a14355235d382f6472f8568a18b2f057a1460297556))"));
+        String descriptor = "sh(wpkh(03fff97bd5755eeea420453a14355235d382f6472f8568a18b2f057a1460297556))";
+        OutputDescriptor parsed = OutputDescriptor.getOutputDescriptor(descriptor);
+        Assertions.assertTrue(parsed.isSingleKey());
+        Assertions.assertEquals(descriptor, parsed.toString());
+        Assertions.assertTrue(parsed.toWallet().isValid());
     }
 
     @Test

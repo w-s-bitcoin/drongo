@@ -298,8 +298,14 @@ public class PSBTEntry {
     }
 
     public void checkOneBytePlusPubKey() throws PSBTParseException {
-        if(this.getKey().length != 34) {
-            throw new PSBTParseException("PSBT key type must be one byte plus pub key");
+        if(getKey().length != 34) {
+            throw new PSBTParseException("PSBT key type must be one byte plus a compressed public key");
+        }
+    }
+
+    public void checkOneBytePlusSignaturePubKey() throws PSBTParseException {
+        if(getKey().length != 34 && getKey().length != 66) {
+            throw new PSBTParseException("PSBT key type must be one byte plus a compressed or uncompressed public key");
         }
     }
 

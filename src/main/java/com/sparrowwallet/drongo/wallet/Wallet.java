@@ -114,6 +114,9 @@ public class Wallet extends Persistable implements Comparable<Wallet> {
     }
 
     public Wallet addChildWallet(StandardAccount standardAccount) {
+        if(isSingleKeyWallet()) {
+            throw new IllegalStateException("Single-key wallets do not have accounts");
+        }
         Wallet childWallet = this.copy();
 
         if(!isMasterWallet()) {
@@ -324,6 +327,22 @@ public class Wallet extends Persistable implements Comparable<Wallet> {
 
     public boolean isNested() {
         return isBip47();
+    }
+
+    public boolean isSingleKeyWallet() {
+        return policyType == PolicyType.SINGLE_KEY;
+    }
+
+    public static Wallet fromSingleKey(String name, ECKey key, ScriptType scriptType) {
+        if(!scriptType.isAllowed(PolicyType.SINGLE_KEY) || (!key.isCompressed() && scriptType != P2PKH)) {
+            throw new IllegalArgumentException("This key does not support the selected address type");
+        }
+        Wallet wallet = new Wallet(name);
+        wallet.setPolicyType(PolicyType.SINGLE_KEY);
+        wallet.setScriptType(scriptType);
+        wallet.getKeystores().add(Keystore.fromSingleKey(key));
+        wallet.setDefaultPolicy(Policy.getPolicy(PolicyType.SINGLE_KEY, scriptType, wallet.getKeystores(), 1));
+        return wallet;
     }
 
     public boolean isBip47() {
@@ -575,7 +594,7 @@ public class Wallet extends Persistable implements Comparable<Wallet> {
     }
 
     public int getGapLimit() {
-        return policyType == PolicyType.SINGLE_SP ? 0 : (gapLimit == null ? DEFAULT_LOOKAHEAD : gapLimit);
+        return policyType == PolicyType.SINGLE_SP || isSingleKeyWallet() ? 0 : (gapLimit == null ? DEFAULT_LOOKAHEAD : gapLimit);
     }
 
     public void gapLimit(Integer gapLimit) {
@@ -657,6 +676,11 @@ public class Wallet extends Persistable implements Comparable<Wallet> {
     }
 
     public synchronized WalletNode getNode(KeyPurpose keyPurpose) {
+        if(isSingleKeyWallet() && keyPurpose != KeyPurpose.RECEIVE) {
+            //Compatibility container for callers estimating change costs. It has no children or history,
+            //and is never persisted. Actual change uses the reusable receive node.
+            return new WalletNode(this, keyPurpose);
+        }
         WalletNode purposeNode;
         Optional<WalletNode> optionalPurposeNode = purposeNodes.stream().filter(node -> node.getKeyPurpose().equals(keyPurpose)).findFirst();
         if(optionalPurposeNode.isEmpty()) {
@@ -671,6 +695,9 @@ public class Wallet extends Persistable implements Comparable<Wallet> {
     }
 
     public int getLookAheadIndex(WalletNode node) {
+        if(isSingleKeyWallet()) {
+            return 0;
+        }
         int lookAheadIndex = getGapLimit() - 1;
         Integer highestUsed = node.getHighestUsedIndex();
         if(highestUsed != null) {
@@ -685,6 +712,9 @@ public class Wallet extends Persistable implements Comparable<Wallet> {
     }
 
     public WalletNode getFreshNode(KeyPurpose keyPurpose, WalletNode current) {
+        if(isSingleKeyWallet()) {
+            return getNode(KeyPurpose.RECEIVE).getChildren().iterator().next();
+        }
         int index = 0;
 
         WalletNode node = getNode(keyPurpose);
@@ -720,7 +750,7 @@ public class Wallet extends Persistable implements Comparable<Wallet> {
     }
 
     public List<ECKey> getPubKeys(WalletNode node) {
-        if(policyType == PolicyType.SINGLE_HD || policyType == PolicyType.SINGLE_SP) {
+        if(policyType == PolicyType.SINGLE_HD || policyType == PolicyType.SINGLE_SP || isSingleKeyWallet()) {
             throw new IllegalStateException("Attempting to retrieve multiple keys for a singlesig policy wallet");
         }
 
@@ -728,7 +758,7 @@ public class Wallet extends Persistable implements Comparable<Wallet> {
     }
 
     public Address getAddress(WalletNode node) {
-        if(policyType == PolicyType.SINGLE_HD || policyType == PolicyType.SINGLE_SP) {
+        if(policyType == PolicyType.SINGLE_HD || policyType == PolicyType.SINGLE_SP || isSingleKeyWallet()) {
             ECKey pubKey = node.getPubKey();
             return scriptType.getAddress(policyType, pubKey);
         } else if(policyType == PolicyType.MULTI_HD) {
@@ -741,7 +771,7 @@ public class Wallet extends Persistable implements Comparable<Wallet> {
     }
 
     public Script getOutputScript(WalletNode node) {
-        if(policyType == PolicyType.SINGLE_HD || policyType == PolicyType.SINGLE_SP) {
+        if(policyType == PolicyType.SINGLE_HD || policyType == PolicyType.SINGLE_SP || isSingleKeyWallet()) {
             ECKey pubKey = node.getPubKey();
             return scriptType.getOutputScript(policyType, pubKey);
         } else if(policyType == PolicyType.MULTI_HD) {
@@ -754,7 +784,7 @@ public class Wallet extends Persistable implements Comparable<Wallet> {
     }
 
     public String getOutputDescriptor(WalletNode node) {
-        if(policyType == PolicyType.SINGLE_HD || policyType == PolicyType.SINGLE_SP) {
+        if(policyType == PolicyType.SINGLE_HD || policyType == PolicyType.SINGLE_SP || isSingleKeyWallet()) {
             ECKey pubKey = node.getPubKey();
             return scriptType.getOutputDescriptor(policyType, pubKey);
         } else if(policyType == PolicyType.MULTI_HD) {
@@ -767,16 +797,16 @@ public class Wallet extends Persistable implements Comparable<Wallet> {
     }
 
     public List<KeyPurpose> getWalletKeyPurposes() {
-        return isBip47() ? List.of(KeyPurpose.RECEIVE) : KeyPurpose.DEFAULT_PURPOSES;
+        return isBip47() || isSingleKeyWallet() ? List.of(KeyPurpose.RECEIVE) : KeyPurpose.DEFAULT_PURPOSES;
     }
 
     public KeyPurpose getChangeKeyPurpose() {
-        return isBip47() ? KeyPurpose.RECEIVE : KeyPurpose.CHANGE;
+        return isBip47() || isSingleKeyWallet() ? KeyPurpose.RECEIVE : KeyPurpose.CHANGE;
     }
 
     public Map<WalletNode, Set<BlockTransactionHashIndex>> getWalletNodes() {
         Map<WalletNode, Set<BlockTransactionHashIndex>> walletNodes = new LinkedHashMap<>();
-        for(KeyPurpose keyPurpose : KeyPurpose.DEFAULT_PURPOSES) {
+        for(KeyPurpose keyPurpose : getWalletKeyPurposes()) {
             getNode(keyPurpose).getChildren().forEach(childNode -> walletNodes.put(childNode, childNode.getTransactionOutputs()));
         }
 
@@ -1050,7 +1080,7 @@ public class Wallet extends Persistable implements Comparable<Wallet> {
         TransactionOutput prevTxOut = transaction.addOutput(1L, receiveNode.getAddress());
 
         TransactionInput txInput = null;
-        if(getPolicyType().equals(PolicyType.SINGLE_HD) || getPolicyType().equals(PolicyType.SINGLE_SP)) {
+        if(getPolicyType().equals(PolicyType.SINGLE_HD) || getPolicyType().equals(PolicyType.SINGLE_SP) || isSingleKeyWallet()) {
             ECKey pubKey = receiveNode.getPubKey();
             TransactionSignature signature = TransactionSignature.dummy(getScriptType().getSignatureType());
             txInput = getScriptType().addSpendingInput(getPolicyType(), transaction, prevTxOut, pubKey, signature);
@@ -1233,13 +1263,13 @@ public class Wallet extends Persistable implements Comparable<Wallet> {
                     }
                 } else {
                     WalletNode changeNode = getFreshNode(getChangeKeyPurpose());
-                    while(txExcludedChangeNodes.contains(changeNode)) {
+                    while(!isSingleKeyWallet() && txExcludedChangeNodes.contains(changeNode)) {
                         changeNode = getFreshNode(getChangeKeyPurpose(), changeNode);
                     }
                     for(Long setChangeAmt : setChangeAmts) {
                         TransactionOutput output = transaction.addOutput(setChangeAmt, changeNode.getOutputScript());
                         outputs.add(new WalletTransaction.ChangeOutput(output, changeNode, setChangeAmt));
-                        changeMap.put(changeNode, setChangeAmt);
+                        changeMap.merge(changeNode, setChangeAmt, Long::sum);
                         changeNode = getFreshNode(getChangeKeyPurpose(), changeNode);
                     }
                 }
@@ -1299,7 +1329,7 @@ public class Wallet extends Persistable implements Comparable<Wallet> {
 
     public static TransactionInput addDummySpendingInput(Transaction transaction, WalletNode walletNode, TransactionOutput prevTxOut) {
         Wallet signingWallet = walletNode.getWallet();
-        if(signingWallet.getPolicyType().equals(PolicyType.SINGLE_HD) || signingWallet.getPolicyType().equals(PolicyType.SINGLE_SP)) {
+        if(signingWallet.getPolicyType().equals(PolicyType.SINGLE_HD) || signingWallet.getPolicyType().equals(PolicyType.SINGLE_SP) || signingWallet.isSingleKeyWallet()) {
             ECKey pubKey = walletNode.getPubKey();
             return signingWallet.getScriptType().addSpendingInput(signingWallet.getPolicyType(), transaction, prevTxOut, pubKey, TransactionSignature.dummy(signingWallet.getScriptType().getSignatureType()));
         } else if(signingWallet.getPolicyType().equals(PolicyType.MULTI_HD)) {
@@ -1626,7 +1656,7 @@ public class Wallet extends Persistable implements Comparable<Wallet> {
                 WalletNode signingNode = walletOutputScripts.get(scriptPubKey);
 
                 // BIP32-derivation fallback for inputs beyond the wallet's derived address range
-                if(signingNode == null && useDerivationFallback && policyType != PolicyType.SINGLE_SP) {
+                if(signingNode == null && useDerivationFallback && policyType != PolicyType.SINGLE_SP && !isSingleKeyWallet()) {
                     signingNode = getSigningNodeFromDerivation(psbtInput, scriptPubKey);
                 }
 
@@ -1710,6 +1740,9 @@ public class Wallet extends Persistable implements Comparable<Wallet> {
     }
 
     public Collection<Keystore> getSigningKeystores(PSBT psbt) {
+        if(isSingleKeyWallet()) {
+            return getSigningNodes(psbt).isEmpty() ? Collections.emptySet() : new LinkedHashSet<>(getKeystores());
+        }
         Set<Keystore> signingKeystores = new LinkedHashSet<>();
 
         for(Map.Entry<ExtendedKey, KeyDerivation> entry : psbt.getExtendedPublicKeys().entrySet()) {
@@ -1735,19 +1768,22 @@ public class Wallet extends Persistable implements Comparable<Wallet> {
     }
 
     public Integer getRequiredGapLimit(PSBT psbt) {
+        if(isSingleKeyWallet()) {
+            return null;
+        }
         if(policyType == PolicyType.SINGLE_SP) {
             return null;
         }
 
         Wallet copy = this.copy();
-        for(KeyPurpose keyPurpose : KeyPurpose.DEFAULT_PURPOSES) {
+        for(KeyPurpose keyPurpose : getWalletKeyPurposes()) {
             WalletNode purposeNode = copy.getNode(keyPurpose);
             purposeNode.fillToIndex(purposeNode.getChildren().size() + SEARCH_LOOKAHEAD);
         }
         Map<PSBTInput, WalletNode> copySigningNodes = copy.getSigningNodes(psbt, false);
         boolean found = false;
         int gapLimit = getGapLimit();
-        for(KeyPurpose keyPurpose : KeyPurpose.DEFAULT_PURPOSES) {
+        for(KeyPurpose keyPurpose : getWalletKeyPurposes()) {
             OptionalInt optHighestIndex = copySigningNodes.values().stream().filter(node -> node.getKeyPurpose() == keyPurpose).mapToInt(WalletNode::getIndex).max();
             if(optHighestIndex.isPresent()) {
                 found = true;
@@ -2038,7 +2074,7 @@ public class Wallet extends Persistable implements Comparable<Wallet> {
 
                 TransactionInput finalizedTxInput;
                 Wallet signingWallet = signingNode.getWallet();
-                if(signingWallet.getPolicyType().equals(PolicyType.SINGLE_HD) || signingWallet.getPolicyType().equals(PolicyType.SINGLE_SP)) {
+                if(signingWallet.getPolicyType().equals(PolicyType.SINGLE_HD) || signingWallet.getPolicyType().equals(PolicyType.SINGLE_SP) || signingWallet.isSingleKeyWallet()) {
                     ECKey pubKey = signingNode.getPubKey();
                     TransactionSignature transactionSignature = psbtInput.isTaproot() ? psbtInput.getTapKeyPathSignature() : psbtInput.getPartialSignature(pubKey);
                     if(transactionSignature == null) {
@@ -2249,7 +2285,7 @@ public class Wallet extends Persistable implements Comparable<Wallet> {
             throw new InvalidWalletException("Cannot determine number of required signatures to sign a transaction");
         }
 
-        if((policyType.equals(PolicyType.SINGLE_HD) || policyType.equals(PolicyType.SINGLE_SP)) && (numSigs != 1 || keystores.size() != 1)) {
+        if((policyType.equals(PolicyType.SINGLE_HD) || policyType.equals(PolicyType.SINGLE_SP) || isSingleKeyWallet()) && (numSigs != 1 || keystores.size() != 1)) {
             throw new InvalidWalletException(policyType + " wallet needs " + numSigs + " and has " + keystores.size() + " keystores");
         }
 
@@ -2269,6 +2305,25 @@ public class Wallet extends Persistable implements Comparable<Wallet> {
             throw new InvalidWalletException(policyType + " wallet needs a silent payment scan address");
         }
 
+        if(isSingleKeyWallet()) {
+            Keystore keystore = keystores.getFirst();
+            byte[] publicKey = keystore.getSinglePublicKey();
+            if(publicKey == null || (publicKey.length != 33 && scriptType != P2PKH)) {
+                throw new InvalidWalletException("Single-key wallet requires a public key; uncompressed keys support legacy addresses only");
+            }
+            if(!childWallets.isEmpty() || !isMasterWallet()) {
+                throw new InvalidWalletException("Single-key wallets do not have accounts");
+            }
+            for(WalletNode purposeNode : purposeNodes) {
+                if(purposeNode.getKeyPurpose() != KeyPurpose.RECEIVE || !purposeNode.isPurposeNode() || purposeNode.getChildren().size() > 1 ||
+                        purposeNode.getChildren().stream().anyMatch(node -> node.getKeyPurpose() != KeyPurpose.RECEIVE || node.getIndex() != 0 || node.getDerivation().size() != 2 || !node.getChildren().isEmpty())) {
+                    throw new InvalidWalletException("Single-key wallets have only one reusable receive address");
+                }
+            }
+        } else if(keystores.stream().anyMatch(keystore -> keystore.getSinglePublicKey() != null || keystore.hasSingleKey())) {
+            throw new InvalidWalletException("Single keys require a single-key wallet policy");
+        }
+
         if(containsDuplicateKeystoreLabels()) {
             throw new InvalidWalletException("Wallet keystores have duplicate labels");
         }
@@ -2278,6 +2333,10 @@ public class Wallet extends Persistable implements Comparable<Wallet> {
                 keystore.checkKeystore();
             } catch(InvalidKeystoreException e) {
                 throw new InvalidWalletException("Keystore " + keystore.getLabel() + " is invalid (" + e.getMessage() + ")", e);
+            }
+
+            if(isSingleKeyWallet()) {
+                continue;
             }
 
             if(derivationMatchesAnotherScriptType(keystore.getKeyDerivation().getDerivationPath())) {
@@ -2430,6 +2489,10 @@ public class Wallet extends Persistable implements Comparable<Wallet> {
         copy.silentPaymentAddresses.putAll(silentPaymentAddresses);
 
         return copy;
+    }
+
+    public boolean containsPrivateKeys() {
+        return keystores.stream().anyMatch(Keystore::hasPrivateKey);
     }
 
     public boolean containsMasterPrivateKeys() {

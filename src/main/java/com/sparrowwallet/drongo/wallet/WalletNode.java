@@ -238,6 +238,13 @@ public class WalletNode extends Persistable implements Comparable<WalletNode> {
             return Collections.emptySet();
         }
 
+        if(wallet.isSingleKeyWallet()) {
+            if(!isPurposeNode() || getKeyPurpose() != KeyPurpose.RECEIVE) {
+                return Collections.emptySet();
+            }
+            index = 0;
+        }
+
         //Optimization to check if child nodes already monotonically increment to the desired index
         int indexCheck = 0;
         for(WalletNode childNode : getChildren()) {
